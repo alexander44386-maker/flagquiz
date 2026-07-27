@@ -114,8 +114,8 @@ h1{font-size:26px;letter-spacing:0.5px;margin:0;font-weight:700;}
 .progress-track{height:3px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:10px;overflow:hidden;}
 .progress-fill{height:100%;background:var(--amber);width:0%;transition:width .3s;}
 
-.target-zone{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;}
-.reticle{position:relative;width:min(72vw,300px);aspect-ratio:4/3;}
+.target-zone{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:4vh;position:relative;}
+.reticle{position:relative;width:min(58vw,240px);aspect-ratio:16/9;}
 .reticle-corner{position:absolute;width:22px;height:22px;border:2px solid var(--amber);opacity:0;transition:all .4s cubic-bezier(.2,.8,.2,1);}
 .reticle-corner.tl{top:-6px;left:-6px;border-right:none;border-bottom:none;}
 .reticle-corner.tr{top:-6px;right:-6px;border-left:none;border-bottom:none;}
@@ -747,16 +747,16 @@ async function initCamera(){
   const video = $('cam-video');
   const fallback = $('no-cam-bg');
   try{
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
     video.srcObject = stream;
-    video.classList.remove('mirror');
+    video.classList.add('mirror');
     fallback.style.display = 'none';
     video.style.display = '';
   }catch(e1){
     try{
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
       video.srcObject = stream;
-      video.classList.add('mirror');
+      video.classList.remove('mirror');
       fallback.style.display = 'none';
       video.style.display = '';
     }catch(e2){
@@ -770,7 +770,12 @@ function stopCamera(){
 }
 
 /* ---------------- SPEECH ---------------- */
-const LETTER_MAP = { a:0, alpha:0, ay:0, b:1, bee:1, bravo:1, c:2, see:2, sea:2, charlie:2, d:3, dee:3, delta:3 };
+const LETTER_MAP = {
+  a:0, ay:0, aye:0, eh:0, alpha:0,
+  b:1, be:1, bee:1, bravo:1,
+  c:2, see:2, sea:2, charlie:2,
+  d:3, dee:3, delta:3
+};
 
 function initSpeech(){
   if(!micSupported){
@@ -781,11 +786,11 @@ function initSpeech(){
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SR();
   recognition.continuous = true;
-  recognition.interimResults = false;
+  recognition.interimResults = true;
   recognition.lang = 'en-US';
   recognition.onresult = (e)=>{
-    const transcript = e.results[e.results.length-1][0].transcript;
-    processTranscript(transcript);
+    const res = e.results[e.results.length-1];
+    processTranscript(res[0].transcript);
   };
   recognition.onerror = ()=>{};
   recognition.onend = ()=>{
@@ -811,16 +816,25 @@ function processTranscript(text){
   if(answered || !gameActive) return;
   const norm = text.toLowerCase().replace(/[^a-z0-9\s]/g,'').trim();
   if(!norm) return;
-  const tokens = norm.split(/\s+/);
-  for(const t of tokens){
-    if(t in LETTER_MAP){ handleAnswer(LETTER_MAP[t]); return; }
-  }
   const q = quiz.questions[quiz.index];
+
+  // Check full country-name matches first so a letter homophone inside a longer
+  // phrase (e.g. "the Bahamas") can't be mistaken for a lone letter.
   for(let i=0;i<q.options.length;i++){
     const name = q.options[i].name.toLowerCase();
     if(name.length>3 && norm.includes(name)){ handleAnswer(i); return; }
   }
+
+  // Only trust a letter match on short utterances, since single letters are
+  // easy for speech recognition to mishear.
+  const tokens = norm.split(/\s+/);
+  if(tokens.length<=2){
+    for(const t of tokens){
+      if(t in LETTER_MAP){ handleAnswer(LETTER_MAP[t]); return; }
+    }
+  }
 }
+
 
 /* ---------------- GAME FLOW ---------------- */
 function startGame(){
