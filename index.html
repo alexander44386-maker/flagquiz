@@ -757,7 +757,7 @@ let lastAnsweredIdx = null;
 let lastFlagShown = null;
 
 const recordingSupported = !!(document.createElement('canvas').captureStream && window.MediaRecorder);
-const recState = { active:false, recorder:null, canvas:null, ctx:null, rafId:null, chunks:[], startTs:0, timerInterval:null, canvasStream:null, mimeType:null, posterDataUrl:null };
+const recState = { active:false, recorder:null, canvas:null, ctx:null, rafId:null, chunks:[], startTs:0, timerInterval:null, canvasStream:null, mimeType:null, posterDataUrl:null, lastDrawTs:0 };
 
 /* ---------------- HELPERS ---------------- */
 function $(id){ return document.getElementById(id); }
@@ -986,8 +986,17 @@ function validateStart(){
 }
 
 /* ---------------- QUESTION BUILDING ---------------- */
-function buildQuestions(pool, n){
-  const chosen = shuffle(pool).slice(0, n);
+let lastSessionCodes = new Set();
+function buildQuestions(pool, n, avoidCodes){
+  avoidCodes = avoidCodes || new Set();
+  let candidates = pool.filter(f=>!avoidCodes.has(f.code));
+  if(candidates.length < n){
+    // Not enough fresh flags to avoid every repeat — fill the rest from
+    // the previously-used ones so we still hit the requested round count.
+    const repeats = shuffle(pool.filter(f=>avoidCodes.has(f.code)));
+    candidates = candidates.concat(repeats);
+  }
+  const chosen = shuffle(candidates).slice(0, n);
   return chosen.map(correct=>{
     const sameContinent = FLAGS.filter(f=>f.continent===correct.continent && f.code!==correct.code);
     let distractors = shuffle(sameContinent).slice(0,3);
@@ -1153,7 +1162,8 @@ function startGame(){
   const pool = FLAGS.filter(f=>selectedCodes.has(f.code));
   const wanted = customCount !== null ? customCount : selectedRounds;
   const n = Math.max(1, Math.min(wanted, pool.length));
-  quiz.questions = buildQuestions(pool, n);
+  quiz.questions = buildQuestions(pool, n, lastSessionCodes);
+  lastSessionCodes = new Set(quiz.questions.map(q=>q.correct.code));
   quiz.index = 0;
   quiz.score = 0;
   quiz.missed = [];
@@ -1276,6 +1286,7 @@ function attachDragHandlers(tile, idx){
     ghost.style.width = rect.width + 'px';
     ghost.style.left = rect.left + 'px';
     ghost.style.top = rect.top + 'px';
+    ghost.style.willChange = 'transform';
     document.body.appendChild(ghost);
 
     tile.classList.add('dragging');
@@ -1283,26 +1294,45 @@ function attachDragHandlers(tile, idx){
     const offsetY = e.clientY - rect.top;
     let moved = false;
 
-    function isOverDropZone(ev){
-      const dzRect = $('drop-zone').getBoundingClientRect();
-      return ev.clientX>=dzRect.left && ev.clientX<=dzRect.right && ev.clientY>=dzRect.top && ev.clientY<=dzRect.bottom;
+    // The drop zone doesn't move mid-drag, so measure it once instead of
+    // calling getBoundingClientRect() on every pointermove (that forces a
+    // layout recalc each time and is a big source of drag jank).
+    const dzEl = $('drop-zone');
+    const dzRect = dzEl.getBoundingClientRect();
+    function isOver(x, y){
+      return x>=dzRect.left && x<=dzRect.right && y>=dzRect.top && y<=dzRect.bottom;
+    }
+
+    // Batch pointer updates to once per animation frame, and move the ghost
+    // with a transform (GPU-composited) instead of left/top (which forces
+    // layout on every update). This is what keeps the drag smooth even
+    // while the background recording loop is busy drawing frames.
+    let lastX = e.clientX, lastY = e.clientY, rafId = null, overNow = false;
+    function applyFrame(){
+      rafId = null;
+      const dx = lastX - e.clientX, dy = lastY - e.clientY;
+      if(Math.abs(dx)>6 || Math.abs(dy)>6) moved = true;
+      ghost.style.transform = `translate3d(${lastX - offsetX - rect.left}px, ${lastY - offsetY - rect.top}px, 0)`;
+      const over = isOver(lastX, lastY);
+      if(over !== overNow){
+        overNow = over;
+        dzEl.classList.toggle('over', over);
+      }
     }
 
     function onMove(ev){
-      const dx = ev.clientX - e.clientX, dy = ev.clientY - e.clientY;
-      if(Math.abs(dx)>6 || Math.abs(dy)>6) moved = true;
-      ghost.style.left = (ev.clientX - offsetX) + 'px';
-      ghost.style.top = (ev.clientY - offsetY) + 'px';
-      $('drop-zone').classList.toggle('over', isOverDropZone(ev));
+      lastX = ev.clientX; lastY = ev.clientY;
+      if(rafId === null) rafId = requestAnimationFrame(applyFrame);
     }
 
     function onUp(ev){
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
+      if(rafId !== null) cancelAnimationFrame(rafId);
       ghost.remove();
       tile.classList.remove('dragging');
-      $('drop-zone').classList.remove('over');
-      if(!moved || isOverDropZone(ev)){
+      dzEl.classList.remove('over');
+      if(!moved || isOver(ev.clientX, ev.clientY)){
         handleAnswer(idx);
       }
     }
@@ -1417,8 +1447,17 @@ function roundRectPath(ctx, x, y, w, h, r){
   ctx.closePath();
 }
 
-function drawRecFrame(){
+function drawRecFrame(now){
   if(!recState.active) return;
+  // The canvas is captured at 30fps regardless of how often we draw to it,
+  // so redrawing at the default ~60Hz animation-frame rate is wasted work
+  // that competes with drag input for main-thread time. Skip every other
+  // frame to roughly halve that cost.
+  if(recState.lastDrawTs && now - recState.lastDrawTs < 30){
+    recState.rafId = requestAnimationFrame(drawRecFrame);
+    return;
+  }
+  recState.lastDrawTs = now;
   const ctx = recState.ctx, canvas = recState.canvas;
   const w = canvas.width, h = canvas.height;
   const video = $('cam-video');
@@ -1507,8 +1546,8 @@ function drawRecFrame(){
   }
 
   // hype caption baked into the saved clip
-  const now = Date.now();
-  if(hypeState.until > now){
+  const nowMs = Date.now();
+  if(hypeState.until > nowMs){
     const text = hypeState.text.toUpperCase();
     ctx.font = `bold ${Math.round(h*0.022)}px sans-serif`;
     const padX = w*0.035, textW = ctx.measureText(text).width;
@@ -1526,7 +1565,7 @@ function drawRecFrame(){
   }
 
   // combo badge baked into the saved clip
-  if(comboState.until > now){
+  if(comboState.until > nowMs){
     const legendary = comboState.legendary;
     const fireTxt = comboState.fire, comboTxt = comboState.text;
     ctx.font = `${Math.round(h*(legendary?0.036:0.03))}px sans-serif`;
@@ -1675,10 +1714,11 @@ async function startRecording(){
   recState.canvasStream = canvasStream;
   recState.mimeType = mimeType;
   recState.startTs = Date.now();
+  recState.lastDrawTs = 0;
   recState.active = true;
 
   recorder.start();
-  drawRecFrame();
+  drawRecFrame(performance.now());
 
   $('rec-btn').classList.add('recording');
   $('rec-dot').classList.add('live');
