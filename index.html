@@ -216,8 +216,6 @@ h1{font-size:28px;letter-spacing:0.3px;margin:0;font-weight:700;color:var(--text
 
 .exit-btn{position:absolute;top:calc(14px + env(safe-area-inset-top));left:14px;background:var(--panel);border:1px solid var(--hairline);border-radius:10px;width:34px;height:34px;color:var(--text-mut);font-size:16px;display:none;z-index:40;box-shadow:0 2px 8px rgba(27,59,75,0.15);}
 .top-spacer{height:34px;}
-#voice-btn{font-size:15px;padding:7px 10px;}
-#voice-btn.muted{opacity:0.5;}
 
 /* ---------- REACTION OVERLAY ---------- */
 .reaction-overlay{position:absolute;top:36%;left:50%;transform:translate(-50%,-50%) scale(0.55);z-index:30;pointer-events:none;opacity:0;display:flex;align-items:flex-start;justify-content:center;}
@@ -405,7 +403,6 @@ h1{font-size:28px;letter-spacing:0.3px;margin:0;font-weight:700;color:var(--text
       <div class="top-spacer"></div>
       <div class="hud-pill score"><span class="lbl">🛂 STAMPS</span><span id="hud-score">0</span></div>
       <div class="hud-right">
-        <button class="hud-pill" id="voice-btn" title="Toggle voice">🔊</button>
         <button class="hud-pill rec-pill" id="rec-btn" title="Record"><span class="rec-dot" id="rec-dot"></span><span id="rec-label">REC</span></button>
       </div>
     </div>
@@ -760,7 +757,7 @@ let lastAnsweredIdx = null;
 let lastFlagShown = null;
 
 const recordingSupported = !!(document.createElement('canvas').captureStream && window.MediaRecorder);
-const recState = { active:false, recorder:null, canvas:null, ctx:null, rafId:null, chunks:[], startTs:0, timerInterval:null, micTrack:null, canvasStream:null, mimeType:null, posterDataUrl:null };
+const recState = { active:false, recorder:null, canvas:null, ctx:null, rafId:null, chunks:[], startTs:0, timerInterval:null, canvasStream:null, mimeType:null, posterDataUrl:null };
 
 /* ---------------- HELPERS ---------------- */
 function $(id){ return document.getElementById(id); }
@@ -1121,32 +1118,11 @@ function stopFaceGuide(){
   $('face-guide').classList.remove('show');
 }
 
-/* ---------------- VOICE COUNTDOWN ---------------- */
-const voiceSupported = 'speechSynthesis' in window;
-let voiceEnabled = voiceSupported && localStorage.getItem('flagscope_voice') !== '0';
-
-function speak(text, rate){
-  if(!voiceSupported || !voiceEnabled) return;
-  try{
-    const u = new SpeechSynthesisUtterance(text);
-    u.rate = rate || 1.1;
-    u.pitch = 1.05;
-    u.volume = 1;
-    speechSynthesis.speak(u);
-  }catch(e){}
-}
+/* ---------------- VOICE (removed) ---------------- */
 function cancelSpeech(){
-  if(voiceSupported) speechSynthesis.cancel();
-}
-function updateVoiceBtn(){
-  const btn = $('voice-btn');
-  if(!btn) return;
-  btn.classList.toggle('muted', !voiceEnabled);
-  btn.textContent = voiceEnabled ? '🔊' : '🔇';
+  if('speechSynthesis' in window) speechSynthesis.cancel();
 }
 function runVoiceIntro(onDone){
-  if(!voiceSupported || !voiceEnabled){ onDone(); return; }
-  cancelSpeech();
   onDone();
 }
 
@@ -1262,12 +1238,10 @@ let countdownState = { active:false, value:'' };
 function runCountdown(callback){
   const first = quiz.index === 0;
   const steps = first ? ['3','2','1','GO!'] : ['2','1'];
-  const words = first ? ['Three','Two','One','Go!'] : ['Two','One'];
   const el = $('countdown-overlay');
   const numEl = $('countdown-num');
   el.classList.add('show');
   countdownState.active = true;
-  cancelSpeech();
   let i = 0;
   function tick(){
     if(i >= steps.length){
@@ -1284,7 +1258,6 @@ function runCountdown(callback){
     numEl.classList.remove('pulse');
     void numEl.offsetWidth; // restart animation
     numEl.classList.add('pulse');
-    speak(words[i], val === 'GO!' ? 1.25 : 1.15);
     i++;
     setTimeout(tick, val === 'GO!' ? 500 : 700);
   }
@@ -1421,17 +1394,6 @@ function endGame(){
 }
 
 /* ---------------- RECORDING ---------------- */
-async function ensureMicTrack(){
-  if(recState.micTrack && recState.micTrack.readyState==='live') return recState.micTrack;
-  try{
-    const micStream = await navigator.mediaDevices.getUserMedia({ audio:true });
-    recState.micTrack = micStream.getAudioTracks()[0];
-    return recState.micTrack;
-  }catch(e){
-    return null;
-  }
-}
-
 function pickMimeType(){
   const candidates = [
     'video/webm;codecs=vp9,opus',
@@ -1692,11 +1654,7 @@ async function startRecording(){
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   const canvasStream = canvas.captureStream(30);
-
-  const micTrack = await ensureMicTrack();
-  const tracks = canvasStream.getVideoTracks();
-  if(micTrack) tracks.push(micTrack);
-  const combined = new MediaStream(tracks);
+  const combined = new MediaStream(canvasStream.getVideoTracks());
 
   const mimeType = pickMimeType();
   let recorder;
@@ -1822,25 +1780,12 @@ $('exit-btn').addEventListener('click', ()=>{
   gameActive = false;
   cancelSpeech();
   if(recState.active) stopRecording();
-  if(recState.micTrack){ recState.micTrack.stop(); recState.micTrack = null; }
   stopCamera();
   resetWizard();
   switchScreen('setup');
 });
 $('retry-btn').addEventListener('click', startGame);
 $('new-setup-btn').addEventListener('click', ()=>{ resetWizard(); switchScreen('setup'); });
-
-$('voice-btn').addEventListener('click', ()=>{
-  voiceEnabled = !voiceEnabled;
-  localStorage.setItem('flagscope_voice', voiceEnabled ? '1' : '0');
-  if(!voiceEnabled) cancelSpeech();
-  updateVoiceBtn();
-});
-if(!voiceSupported){
-  $('voice-btn').disabled = true;
-  $('voice-btn').title = 'Voice not supported in this browser';
-}
-updateVoiceBtn();
 
 document.addEventListener('keydown', (e)=>{
   if(!gameActive) return;
