@@ -1496,7 +1496,7 @@ function drawRecFrame(now){
 
   const q = (gameActive && !countdownState.active) ? quiz.questions[quiz.index] : null;
   if(q){
-    const rw = w*0.62, rh = rw*0.75, rx = (w-rw)/2, ry = h*0.14;
+    const rw = w*0.465, rh = rw*0.75, rx = (w-rw)/2, ry = h*0.13;
     const cl = Math.round(w*0.035);
     ctx.strokeStyle = '#FFD54F';
     ctx.lineWidth = Math.max(2, w*0.004);
@@ -1522,9 +1522,14 @@ function drawRecFrame(now){
     ctx.fillText('WHOSE FLAG IS THIS?', w/2, ry+rh+h*0.035);
     ctx.textAlign = 'left';
 
+    // Choices are anchored to the bottom of the frame (not to the flag box)
+    // so they sit in the open space below the person's face/chin instead of
+    // crowding right under the flag.
     const letters = ['A','B','C','D'];
-    const colW = w*0.44, colGap = w*0.02, rowH = h*0.07, rowGap = h*0.015;
-    const ay0 = ry+rh+h*0.065;
+    const colW = w*0.44, colGap = w*0.02, rowH = h*0.075, rowGap = h*0.02;
+    const blockH = rowH*2 + rowGap;
+    const bottomMargin = h*0.1;
+    const ay0 = h - bottomMargin - blockH;
     q.options.forEach((opt,i)=>{
       const col = i%2, row = Math.floor(i/2);
       const ax = w*0.04 + col*(colW+colGap);
