@@ -2482,6 +2482,7 @@ function speakCountryName(name,btnEl){
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Flag Cam — Flag Adventure</title>
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js" defer><\/script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Nunito:wght@400;600;700;800;900&family=Dancing+Script:wght@600;700&family=Space+Grotesk:wght@400;500;600;700;800&family=Poppins:wght@400;500;600;700;800&family=Fredoka:wght@500;600;700&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -2691,6 +2692,11 @@ h1{font-size:28px;letter-spacing:0.3px;margin:0;font-weight:800;color:var(--text
 .answer-tile:disabled{opacity:1;}
 
 .exit-btn{position:absolute;top:calc(14px + env(safe-area-inset-top));left:14px;background:var(--panel);border:1px solid var(--hairline);border-radius:10px;width:34px;height:34px;color:var(--text-mut);font-size:16px;display:none;z-index:40;box-shadow:0 2px 8px rgba(0,0,0,0.3);}
+.pause-overlay{position:fixed;inset:0;z-index:200;display:none;align-items:center;justify-content:center;background:rgba(10,5,26,0.86);backdrop-filter:blur(3px);}
+.pause-card{display:flex;flex-direction:column;align-items:center;gap:18px;padding:30px 36px;background:var(--panel-solid,#231447);border:2px solid var(--cyan);border-radius:20px;box-shadow:0 10px 30px rgba(0,0,0,0.5);}
+.pause-title{font-family:var(--font-mono);font-weight:800;font-size:20px;letter-spacing:1px;color:#fff;}
+.pause-resume-btn{font-family:var(--font-mono);font-weight:800;font-size:15px;letter-spacing:0.5px;color:#0D0F1A;background:var(--cyan);border:none;border-radius:999px;padding:12px 26px;cursor:pointer;}
+#game-screen.paused .cam-answers, #game-screen.paused .drop-zone{pointer-events:none;}
 .top-spacer{height:34px;}
 
 /* ---------- REACTION OVERLAY ---------- */
@@ -2874,11 +2880,19 @@ h1{font-size:28px;letter-spacing:0.3px;margin:0;font-weight:800;color:var(--text
 <div id="game-screen" class="screen">
   <button class="exit-btn" id="exit-btn" style="display:flex;align-items:center;justify-content:center;">✕</button>
 
+  <div class="pause-overlay" id="pause-overlay">
+    <div class="pause-card">
+      <div class="pause-title">⏸ PAUSED</div>
+      <button class="pause-resume-btn" id="pause-resume-btn">▶ Resume</button>
+    </div>
+  </div>
+
   <div class="game-layout">
     <div class="hud-top">
       <div class="top-spacer"></div>
       <div class="hud-pill score"><span class="lbl">🛂 STAMPS</span><span id="hud-score">0</span></div>
       <div class="hud-right">
+        <button class="hud-pill" id="pause-btn" title="Pause">⏸</button>
         <button class="hud-pill rec-pill" id="rec-btn" title="Record"><span class="rec-dot" id="rec-dot"></span><span id="rec-label">REC</span></button>
       </div>
     </div>
@@ -3192,7 +3206,7 @@ let customCount = null;
 
 let stream = null;
 
-const quiz = { questions: [], index: 0, score: 0, missed: [], streak: 0, maxStreak: 0, answerTimes: [] };
+const quiz = { questions: [], index: 0, score: 0, missed: [], streak: 0, maxStreak: 0, answerTimes: [], paused: false };
 const EXPLORER_RANKS = [
   'Cartography Prodigy','Border Whisperer','Continental Legend','Atlas Ace','Globe Trotter Supreme',
   'Passport Pro','Flag Sage','Wanderlust Wizard','Compass Virtuoso','Terrain Tactician',
@@ -3483,6 +3497,7 @@ function buildQuestions(pool, n, avoidCodes){
     candidates = candidates.concat(repeats);
   }
   const chosen = shuffle(candidates).slice(0, n);
+  let prevCorrectIndex = -1;
   return chosen.map(correct=>{
     const sameContinent = FLAGS.filter(f=>f.continent===correct.continent && f.code!==correct.code);
     let distractors = shuffle(sameContinent).slice(0,3);
@@ -3490,8 +3505,20 @@ function buildQuestions(pool, n, avoidCodes){
       const others = shuffle(FLAGS.filter(f=>f.code!==correct.code && !distractors.includes(f))).slice(0, 3-distractors.length);
       distractors = distractors.concat(others);
     }
-    const options = shuffle([correct, ...distractors]);
-    return { correct, options, correctIndex: options.indexOf(correct) };
+    let options = shuffle([correct, ...distractors]);
+    let correctIndex = options.indexOf(correct);
+    // A plain shuffle lands the correct answer in the same slot as the
+    // previous question about 1 time in 4, which reads as a pattern to
+    // play out ("it's always B") rather than as luck. Re-shuffle just the
+    // positions (not the option set) until it differs from last time.
+    let guard = 0;
+    while(correctIndex === prevCorrectIndex && guard < 10){
+      options = shuffle(options);
+      correctIndex = options.indexOf(correct);
+      guard++;
+    }
+    prevCorrectIndex = correctIndex;
+    return { correct, options, correctIndex };
   });
 }
 
@@ -3557,8 +3584,20 @@ async function enterCameraPreviewStep(){
 }
 
 /* ---------------- FACE FRAMING GUIDE ---------------- */
+// Two detection backends are supported so the framing guide works on every
+// browser, not just the ones that ship the (Chrome/Android-only, semi
+// deprecated) Shape Detection API:
+//   1. Native `FaceDetector` — zero download, fastest, used when present.
+//   2. face-api.js (TinyFaceDetector, TFJS-backed WASM/WebGL) — loaded from
+//      a CDN and used everywhere else (Safari, Firefox, desktop Chrome).
+// If neither is available (offline first load, CDN blocked, etc.) we fall
+// back to the original static "center your face" message so the guide
+// never breaks the camera step.
 let faceDetectorInstance = undefined; // undefined = not checked yet, false = unsupported
 let faceGuideActive = false;
+let faceApiModelsPromise = null;
+const FACEAPI_MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model/';
+
 function getFaceDetector(){
   if(faceDetectorInstance !== undefined) return faceDetectorInstance;
   try{
@@ -3567,22 +3606,57 @@ function getFaceDetector(){
   return faceDetectorInstance;
 }
 
-function startFaceGuide(){
+// Lazily downloads + initializes the face-api.js tiny detector model once,
+// caching the in-flight/resolved promise so repeated calls (re-entering the
+// camera step) don't re-download anything.
+function loadFaceApiModels(){
+  if(faceApiModelsPromise) return faceApiModelsPromise;
+  faceApiModelsPromise = (async ()=>{
+    if(typeof faceapi === 'undefined') return false;
+    try{
+      await faceapi.nets.tinyFaceDetector.loadFromUri(FACEAPI_MODEL_URL);
+      return true;
+    }catch(e){
+      return false;
+    }
+  })();
+  return faceApiModelsPromise;
+}
+
+async function startFaceGuide(){
   $('face-guide').classList.add('show');
   $('face-guide-ring').classList.remove('good');
   faceGuideActive = true;
-  const detector = getFaceDetector();
 
-  if(!detector){
-    // No on-device face detection available — still give friendly, honest guidance.
-    $('face-guide-msg').textContent = '🙂 Center your face in the circle';
-    return;
-  }
-
-  $('face-guide-msg').textContent = '🙂 Move closer';
+  const nativeDetector = getFaceDetector();
   const video = $('cam-video');
   const tmp = document.createElement('canvas');
   const tctx = tmp.getContext('2d');
+
+  const detectNative = async (canvas)=> await nativeDetector.detect(canvas);
+  const detectFaceApi = async (canvas)=>{
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 });
+    const result = await faceapi.detectSingleFace(canvas, opts);
+    return result ? [{ boundingBox: result.box }] : [];
+  };
+
+  let detectFn = null;
+  if(nativeDetector){
+    detectFn = detectNative;
+  } else {
+    $('face-guide-msg').textContent = '🙂 Loading face guide…';
+    const ready = await loadFaceApiModels();
+    if(!faceGuideActive) return; // user backed out while models were loading
+    if(ready){
+      detectFn = detectFaceApi;
+    } else {
+      // No on-device face detection available — still give friendly, honest guidance.
+      $('face-guide-msg').textContent = '🙂 Center your face in the circle';
+      return;
+    }
+  }
+
+  $('face-guide-msg').textContent = '🙂 Move closer';
 
   const loop = async ()=>{
     if(!faceGuideActive) return;
@@ -3591,7 +3665,7 @@ function startFaceGuide(){
       tmp.height = Math.round(180 * video.videoHeight / video.videoWidth);
       try{
         tctx.drawImage(video, 0, 0, tmp.width, tmp.height);
-        const faces = await detector.detect(tmp);
+        const faces = await detectFn(tmp);
         applyFaceGuideResult(faces, tmp.width, tmp.height);
       }catch(e){ /* skip this tick */ }
     }
@@ -3675,6 +3749,10 @@ function startGame(){
   quiz.streak = 0;
   quiz.maxStreak = 0;
   quiz.answerTimes = [];
+  quiz.paused = false;
+  $('game-screen').classList.remove('paused');
+  $('pause-overlay').style.display = 'none';
+  $('pause-btn').textContent = '⏸';
   hypeState = { text: '', until: 0 };
   clearComboOverlay();
   gameActive = true;
@@ -3791,7 +3869,7 @@ function attachDragHandlers(tile, idx){
 
 let questionRevealTs = 0;
 function handleAnswer(idx){
-  if(answered) return;
+  if(answered || quiz.paused) return;
   const q = quiz.questions[quiz.index];
   if(idx<0 || idx>=q.options.length) return;
   answered = true;
@@ -3831,6 +3909,38 @@ function next(){
     showQuestion();
   }
 }
+
+/* ---------------- PAUSE ---------------- */
+function pauseGame(){
+  if(!gameActive || quiz.paused) return;
+  quiz.paused = true;
+  cancelSpeech();
+  const video = $('cam-video');
+  if(video && !video.paused) video.pause();
+  pauseRecordingForGamePause();
+  $('game-screen').classList.add('paused');
+  $('pause-overlay').style.display = 'flex';
+  $('pause-btn').textContent = '▶';
+}
+function resumeGame(){
+  if(!gameActive || !quiz.paused) return;
+  quiz.paused = false;
+  const video = $('cam-video');
+  if(video) video.play().catch(()=>{});
+  resumeRecordingForGameResume();
+  $('game-screen').classList.remove('paused');
+  $('pause-overlay').style.display = 'none';
+  $('pause-btn').textContent = '⏸';
+}
+// Auto-pause if the tab/app is backgrounded mid-game (screen lock, app
+// switch, incoming call). Without this the recorder keeps running while
+// the canvas draw loop stalls in the background, producing a clip that
+// looks frozen but keeps advancing in time. Requires the user to tap
+// Resume rather than resuming automatically, since the camera feed may
+// need re-acquiring after a long backgrounding anyway.
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden && gameActive && !quiz.paused) pauseGame();
+});
 
 function endGame(){
   gameActive = false;
@@ -4177,17 +4287,46 @@ async function startRecording(){
   recState.lastDrawTs = 0;
   recState.active = true;
 
+  recState.pausedMs = 0;
   recorder.start(1000);
   drawRecFrame(performance.now());
 
   $('rec-btn').classList.add('recording');
   $('rec-dot').classList.add('live');
+  startRecTimerLabel();
+}
+
+function startRecTimerLabel(){
+  clearInterval(recState.timerInterval);
   recState.timerInterval = setInterval(()=>{
-    const elapsed = Math.floor((Date.now()-recState.startTs)/1000);
+    const elapsed = Math.floor((Date.now()-recState.startTs-recState.pausedMs)/1000);
     const mm = String(Math.floor(elapsed/60)).padStart(2,'0');
     const ss = String(elapsed%60).padStart(2,'0');
     $('rec-label').textContent = mm+':'+ss;
   }, 500);
+}
+
+// Recording is paused/resumed in lockstep with the game (see pauseGame/
+// resumeGame). Without this, a backgrounded tab or a paused game keeps
+// MediaRecorder chunking at a steady clock while drawRecFrame's rAF loop
+// is throttled or stopped — the result is a clip whose duration keeps
+// climbing normally but whose picture is frozen on the last drawn frame.
+// Pausing the recorder (not just the draw loop) keeps duration and
+// picture in sync.
+function pauseRecordingForGamePause(){
+  if(!recState.active || !recState.recorder || recState.recorder.state!=='recording') return;
+  recState.recorder.pause();
+  recState.pauseStartedTs = Date.now();
+  if(recState.rafId) cancelAnimationFrame(recState.rafId);
+  clearInterval(recState.timerInterval);
+}
+function resumeRecordingForGameResume(){
+  if(!recState.active || !recState.recorder || recState.recorder.state!=='paused') return;
+  if(recState.pauseStartedTs) recState.pausedMs += Date.now()-recState.pauseStartedTs;
+  recState.recorder.resume();
+  recState.lastDrawTs = 0;
+  drawRecFrame(performance.now());
+  startRecTimerLabel();
 }
 
 function stopRecording(){
@@ -4278,6 +4417,9 @@ $('wizard-back-btn').addEventListener('click', ()=>{
 });
 $('exit-btn').addEventListener('click', ()=>{
   gameActive = false;
+  quiz.paused = false;
+  $('game-screen').classList.remove('paused');
+  $('pause-overlay').style.display = 'none';
   cancelSpeech();
   if(recState.active) stopRecording();
   stopCamera();
@@ -4288,11 +4430,16 @@ $('retry-btn').addEventListener('click', startGame);
 $('new-setup-btn').addEventListener('click', ()=>{ resetWizard(); switchScreen('setup'); });
 
 document.addEventListener('keydown', (e)=>{
-  if(!gameActive) return;
+  if(!gameActive || quiz.paused) return;
   const k = e.key.toLowerCase();
   const map = {a:0,b:1,c:2,d:3};
   if(k in map) handleAnswer(map[k]);
 });
+$('pause-btn').addEventListener('click', ()=>{
+  if(!gameActive) return;
+  quiz.paused ? resumeGame() : pauseGame();
+});
+$('pause-resume-btn').addEventListener('click', resumeGame);
 
 /* ---------------- INIT ---------------- */
 renderPoolChips();
