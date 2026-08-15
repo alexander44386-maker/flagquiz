@@ -623,13 +623,13 @@ DAYS.forEach(d=>{ d.countries.forEach(c=>{ COUNTRY_CONTINENT[c.name]=d.continent
 const POPULARITY_ORDER = [
   "United States","United Kingdom","Germany","Japan","Philippines","China","France","Italy","Brazil","Canada",
   "South Korea","Switzerland","Australia","Greece","Norway","Israel","Jamaica","Thailand","Poland","Vietnam",
-  "Spain","Russia","Nepal","India","Argentina","South Africa","Egypt","Turkey","Netherlands","Sweden",
-  "Portugal","Ireland","Saudi Arabia","United Arab Emirates","New Zealand","Cuba","Indonesia","Singapore","Malaysia","Ukraine",
-  "Belgium","Luxembourg","Austria","Denmark","Finland","Colombia","Chile","Peru","Venezuela","Nigeria",
-  "Kenya","Morocco","Pakistan","Bangladesh","Iran","North Korea","Cambodia","Myanmar","Mexico","Sri Lanka",
+  "Spain","Russia","Nepal","India","Argentina","Cambodia","Egypt","Luxembourg","Ukraine","Sri Lanka",
+  "Portugal","Ireland","Saudi Arabia","Lebanon","New Zealand","Cuba","Indonesia","Singapore","Malaysia","Netherlands",
+  "Belgium","Austria","Denmark","Finland","South Africa","Colombia","Chile","Peru","Venezuela","Nigeria",
+  "Kenya","Morocco","Pakistan","Bangladesh","Iran","North Korea","Turkey","Myanmar","Mexico","United Arab Emirates",
   "Ecuador","Bolivia","Uruguay","Paraguay","Panama","Costa Rica","Guatemala","Belize","Honduras","El Salvador",
   "Nicaragua","Dominican Republic","Haiti","Trinidad and Tobago","Bahamas","Barbados","Antigua and Barbuda","Guyana","Suriname","Qatar",
-  "Kuwait","Jordan","Lebanon","Libya","Tunisia","Algeria","Ethiopia","Ghana","Tanzania","Senegal",
+  "Kuwait","Jordan","Sweden","Libya","Tunisia","Algeria","Ethiopia","Ghana","Tanzania","Senegal",
   "Ivory Coast","Cameroon","Zimbabwe","Zambia","Namibia","Botswana","Madagascar","Rwanda","Mongolia","Kazakhstan",
   "Uzbekistan","Kyrgyzstan","Turkmenistan","Afghanistan","Oman","Brunei","Laos","Fiji","Papua New Guinea","Samoa",
   "Tonga","Vanuatu","Solomon Islands","Georgia","Armenia","Belarus","Moldova","Romania","Bulgaria","Serbia",
@@ -3830,7 +3830,7 @@ function beginQuestionReveal(q){
 let countdownState = { active:false, value:'' };
 function runCountdown(callback){
   const first = quiz.index === 0;
-  const steps = first ? ['3','2','1','GO!'] : ['2','1'];
+  const steps = first ? ['5','4','3','2','1','GO!'] : ['2','1'];
   const el = $('countdown-overlay');
   const numEl = $('countdown-num');
   el.classList.add('show');
@@ -3852,7 +3852,7 @@ function runCountdown(callback){
     void numEl.offsetWidth; // restart animation
     numEl.classList.add('pulse');
     i++;
-    setTimeout(tick, val === 'GO!' ? 500 : 700);
+    setTimeout(tick, val === 'GO!' ? 500 : 1000);
   }
   tick();
 }
@@ -4248,7 +4248,7 @@ function drawRecapFrame(ctx, canvas){
 async function startRecording(){
   if(!recordingSupported || recState.active) return;
   const video = $('cam-video');
-  const w = video.videoWidth ? Math.min(video.videoWidth, 960) : 720;
+  const w = video.videoWidth ? Math.min(video.videoWidth, 1280) : 960;
   const h = video.videoWidth ? Math.round(w * (video.videoHeight/video.videoWidth)) : 1280;
 
   const canvas = document.createElement('canvas');
@@ -4265,7 +4265,7 @@ async function startRecording(){
   // buffer once a second instead of holding the entire recording in memory
   // until stop() is called — on longer games that unbounded buffer is what
   // was crashing the tab ("Aw, Snap!") on Android Chrome.
-  const recorderOpts = { videoBitsPerSecond: 1500000 };
+  const recorderOpts = { videoBitsPerSecond: 3500000 };
   if(mimeType) recorderOpts.mimeType = mimeType;
   try{
     recorder = new MediaRecorder(combined, recorderOpts);
